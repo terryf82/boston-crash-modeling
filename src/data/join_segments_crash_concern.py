@@ -1,4 +1,3 @@
-
 # coding: utf-8
 
 
@@ -8,62 +7,62 @@
 
 import fiona
 import json
-import os
 import pyproj
 import rtree
 import csv
-import matplotlib.pyplot as plt
 import pandas as pd
-from shapely.geometry import Point, MultiPoint, shape, mapping
-
-# Project projection = EPSG:3857
-PROJ = pyproj.Proj(init='epsg:3857')
-MAP_FP = './data/maps'
-DATA_FP = './data'
+import os.path
+from shapely.geometry import Point, shape, mapping
+from util import write_shp, read_shp
 
 
-def read_record(record, x, y, orig=None, new=PROJ):
+def read_record(record, x, y, orig=None, new=pyproj.Proj(init='epsg:3857')):
     """
-    Reads record, outputs dictionary with point and properties
-    Specify orig if reprojecting
+    Reads record, outputs dictionary with point and properties, reprojecting if necessary
+    
+    Arguments:
+        record: 
+        x (float): X coordinate 
+        y (float): Y coordinate
+        orig: Original pyproj projection, e.g. pyproj.Proj(init="epsg:3857")
+        new: A new pyproj projection, e.g. pyproj.Proj(
     """
     if (orig is not None):
         x, y = pyproj.transform(orig, new, x, y)
     r_dict = {
         'point': Point(float(x), float(y)),
-        'properties': r
+        'properties': record
     }
-    return(r_dict)
+    return r_dict
 
 
-def read_shp(fp):
-    """ Read shp, output tuple geometry + property """
-    out = [(shape(line['geometry']), line['properties'])
-           for line in fiona.open(fp)]
-    return(out)
 def make_schema(geometry, properties):
     """
     Utility for making schema with 'str' value for each key in properties
+
+    Args:
+        geometry:  
+        properties (dict):   
+
+    Returns:
+        dict: Schema for a feature
     """
     properties_dict = {k: 'str' for k, v in properties.items()}
     schema = {
         'geometry': geometry,
         'properties': properties_dict
     }
-    return(schema)
-    
-def write_shp(schema, fp, data, shape_key, prop_key):
-    # Write a new Shapefile
-    with fiona.open(fp, 'w', 'ESRI Shapefile', schema) as c:
-        for i in data:
-            c.write({
-                'geometry': mapping(i[shape_key]),
-                'properties': i[prop_key],
-            })
+    return schema
+
 
 def find_nearest(records, segments, segments_index, tolerance):
-    """ Finds nearest segment to records
-    tolerance : max units distance from record point to consider
+    """ For each record, finds nearest segment 
+
+    Args:
+        records: An array of 
+        segments: A list of segments
+        segments_index: an Rtree spatial index for segments
+        tolerance: Max distance from record point to consider (in projection units) 
     """
 
     print "Using tolerance {}".format(tolerance)
@@ -90,67 +89,94 @@ def find_nearest(records, segments, segments_index, tolerance):
         else:
             record['properties']['near_id'] = ''
 
-# Read in CAD crash data
-crash = []
-with open(DATA_FP + '/cad_crash_events_with_transport_2016_wgs84.csv') as f:
-    csv_reader = csv.DictReader(f)
-    for r in csv_reader:
-        # Some crash 0 / blank coordinates
-        if r['X'] != '':
-            crash.append(
-                read_record(r, r['X'], r['Y'],
-                            orig=pyproj.Proj(init='epsg:4326'))
-            )
-print "Read in data from {} crashes".format(len(crash))
 
-# Read in vision zero data
-concern = []
-# Have to use pandas read_csv, unicode trubs
-concern_raw = pd.read_csv(DATA_FP + '/Vision_Zero_Entry.csv')
-concern_raw = concern_raw.to_dict('records')
-for r in concern_raw:
-    concern.append(
-        read_record(r, r['X'], r['Y'],
-                    orig=pyproj.Proj(init='epsg:4326'))
-    )
-print "Read in data from {} concerns".format(len(concern))
+def main():
+    """ Links point data (crashes, VZ concerns) to road network 
+     
+    Dependencies:
+        raw/cad_crash_events_with_transport_2017_wgs84.csv
+        raw/Vision_Zero_Entry.csv
+        interim/inters_segments.shp
+        interim/non_inters.segments.shp
+        
+    Outputs:
+        interim/concern_joined.shp
+        interim/concern_joined.json
+        interim/crash_joined.shp
+        interim/crash_joined.json
+    """
+    # Project projection = EPSG:3857
+    # MAP_FP = './data/maps'
+    # DATA_FP = './data'
+    INTERIM_FP = os.path.normpath('./data/interim')
+    # PROCESSED_FP = './data/processed'
+    RAW_FP = os.path.normpath('./data/raw')
 
-#Read in segments
-inter = read_shp(MAP_FP + '/inters_segments.shp')
-non_inter = read_shp(MAP_FP + '/non_inters_segments.shp')
-print "Read in {} intersection, {} non-intersection segments".format(len(inter), len(non_inter))
+    # Read in CAD crash data
+    crash = []
 
-# Combine inter + non_inter
-combined_seg = inter + non_inter
+    with open(os.path.join(RAW_FP, "cad_crash_events_with_transport_2016_wgs84.csv")) as f:
+        csv_reader = csv.DictReader(f)
+        for r in csv_reader:
+            # Some crash 0 / blank coordinates
+            if r['X'] != '':
+                crash.append(
+                    read_record(r, r['X'], r['Y'],
+                                orig=pyproj.Proj(init='epsg:4326'))
+                )
+    print "Read in data from {} crashes".format(len(crash))
 
-# Create spatial index for quick lookup
-segments_index = rtree.index.Index()
-for idx, element in enumerate(combined_seg):
-    segments_index.insert(idx, element[0].bounds)
+    # Read in vision zero data
+    concern = []
+    # Have to use pandas read_csv, unicode trubs
+    concern_raw = pd.read_csv(os.path.join(RAW_FP, "Vision_Zero_Entry.csv"), encoding='utf-8-sig')
+    concern_raw = concern_raw.to_dict('records')
+    for r in concern_raw:
+        concern.append(
+            read_record(r, r['X'], r['Y'],
+                        orig=pyproj.Proj(init='epsg:4326'))
+        )
+    print "Read in data from {} concerns".format(len(concern))
 
-# Find nearest crashes - 30 tolerance
-print "snapping crashes to segments"
-find_nearest(crash, combined_seg, segments_index, 30)
+    # Read in segments
+    inter = read_shp(os.path.join(INTERIM_FP, 'inters_segments.shp'))
+    non_inter = read_shp(os.path.join(INTERIM_FP, 'non_inters_segments.shp'))
+    print "Read in {} intersection, {} non-intersection segments".format(len(inter), len(non_inter))
 
-# Find nearest concerns - 20 tolerance
-print "snapping concerns to segments"
-find_nearest(concern, combined_seg, segments_index, 20)
+    # Combine inter + non_inter
+    combined_seg = inter + non_inter
 
-# Write concerns
-concern_schema = make_schema('Point', concern[0]['properties'])
-print "output concerns shp to ", MAP_FP
-write_shp(concern_schema, MAP_FP + '/concern_joined.shp',
-          concern, 'point', 'properties')
-print "output concerns data to ", DATA_FP
-with open(DATA_FP + '/concern_joined.json', 'w') as f:
-    json.dump([c['properties'] for c in concern], f)
+    # Create spatial index for quick lookup
+    segments_index = rtree.index.Index()
+    for idx, element in enumerate(combined_seg):
+        segments_index.insert(idx, element[0].bounds)
 
-# Write crash
-crash_schema = make_schema('Point', crash[0]['properties'])
-print "output crash shp to ", MAP_FP
-write_shp(crash_schema, MAP_FP + '/crash_joined.shp',
-          crash, 'point', 'properties')
-print "output crash data to ", DATA_FP
-with open(DATA_FP + '/crash_joined.json', 'w') as f:
-    json.dump([c['properties'] for c in crash], f)
+    # Find nearest crashes - 30 tolerance
+    print "snapping crashes to segments"
+    find_nearest(crash, combined_seg, segments_index, 30)
 
+    # Find nearest concerns - 20 tolerance
+    print "snapping concerns to segments"
+    find_nearest(concern, combined_seg, segments_index, 20)
+
+    # Write concerns
+    concern_schema = make_schema('Point', concern[0]['properties'])
+    print "output concerns shp to ", INTERIM_FP
+    write_shp(concern_schema, os.path.join(INTERIM_FP, 'concern_joined.shp'),
+              concern, 'point', 'properties')
+    print "output concerns data to ", INTERIM_FP
+    with open(os.path.join(INTERIM_FP, 'concern_joined.json'), 'w') as f:
+        json.dump([c['properties'] for c in concern], f)
+
+    # Write crash
+    crash_schema = make_schema('Point', crash[0]['properties'])
+    print "output crash shp to ", INTERIM_FP
+    write_shp(crash_schema, os.path.join(INTERIM_FP, 'crash_joined.shp'),
+              crash, 'point', 'properties')
+    print "output crash data to ", INTERIM_FP
+    with open(os.path.join(INTERIM_FP, 'crash_joined.json'), 'w') as f:
+        json.dump([c['properties'] for c in crash], f)
+
+
+if __name__ == '__main__':
+    main()

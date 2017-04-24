@@ -1,152 +1,160 @@
-
 # coding: utf-8
 
 # Segment (intersection and non-intersection) creation
 # Draws on: http://bit.ly/2m7469y
 # Developed by: bpben
 
-import fiona
-import os
-import itertools
-import pyproj
-import rtree
-import json
 import copy
-import matplotlib.pyplot as plt
-from fiona.crs import from_epsg
-from shapely.geometry import Point, MultiPoint, shape, mapping
-from shapely.ops import unary_union
+import json
+import os
+import os.path
 from collections import defaultdict
 
-MAP_FP = './data/maps'
-DATA_FP = './data'
-
-print "Map data at ", MAP_FP
-print "Output intersection data to ", DATA_FP
+import fiona
+import pyproj
+import rtree
+from fiona.crs import from_epsg
+from shapely.geometry import Point, shape, mapping
+from shapely.ops import unary_union
+from util import write_shp
 
 
 def get_intersection_buffers(intersections, intersection_buffer_units):
-    """ Buffers intersection according to proj units """
+    """ Buffers intersection according to proj units 
+
+    Args:
+        intersections: Iterable of intersection data where first member of each element is a Shapely geometry
+        intersection_buffer_units: Number of units to buffer by (corresponds to units of projection)
+    """
     buffered_intersections = [intersection[0].buffer(intersection_buffer_units)
                               for intersection in intersections]
     return unary_union(buffered_intersections)
 
 
-def write_shp(schema, fp, data, shape_key, prop_key):
-    """ Write Shapefile
-    schema : schema dictionary
-    shape_key : column name or tuple index of Shapely shape
-    prop_key : column name or tuple index of properties
+def main():
+    """ Splits road network up into intersections and non-intersection segments
+    
+    Dependencies:
+        interim/inters.shp
+        interim/inters_3857.shp
+        raw/ma_cob_spatially_joined_streets.shp
+        
+    
+    Outputs:
+        interim/inters_segments.shp
+        interim/inters_data.json
+        interim/non_inters_segments.shp
     """
-    with fiona.open(fp, 'w', 'ESRI Shapefile', schema) as c:
-        for i in data:
-            c.write({
-                'geometry': mapping(i[shape_key]),
-                'properties': i[prop_key],
-            })
+    RAW_FP = os.path.normpath('./data/raw')
+    INTERIM_FP = os.path.normpath('./data/interim')
 
-inters_shp_path_raw = MAP_FP + '/inters.shp'
-inters_shp_path = MAP_FP + '/inters_3857.shp'
+    print "Raw data at ", RAW_FP
+    print "Output intersection data to ", INTERIM_FP
 
-# Reproject to 3857
-# Necessary because original intersection extraction had null projection
-print "reprojecting raw intersection shapefile"
-inters = fiona.open(inters_shp_path_raw)
-inproj = pyproj.Proj(init='epsg:4326')
-outproj = pyproj.Proj(init='epsg:3857')
+    inters_shp_path_raw = os.path.join(INTERIM_FP, 'inters.shp')
+    inters_shp_path = os.path.join(INTERIM_FP, 'inters_3857.shp')
 
-with fiona.open(inters_shp_path, 'w', crs=from_epsg(3857),
-                schema=inters.schema, driver='ESRI Shapefile') as output:
-    for inter in inters:
-        coords = inter['geometry']['coordinates']
-        re_point = pyproj.transform(inproj, outproj, coords[0], coords[1])
-        point = Point(re_point)
-        output.write({'geometry': mapping(point),
-                      'properties': inter['properties']})
+    # Reproject to 3857
+    # Necessary because original intersection extraction had null projection
+    print "reprojecting raw intersection shapefile"
+    inters = fiona.open(inters_shp_path_raw)
+    inproj = pyproj.Proj(init='epsg:4326')
+    outproj = pyproj.Proj(init='epsg:3857')
 
-# Read in boston segments + mass DOT join
-roads_shp_path = MAP_FP + '/ma_cob_spatially_joined_streets.shp'
-roads = [(shape(road['geometry']), road['properties'])
-         for road in fiona.open(roads_shp_path)]
-print "read in {} road segments".format(len(roads))
+    with fiona.open(inters_shp_path, 'w', crs=from_epsg(3857),
+                    schema=inters.schema, driver='ESRI Shapefile') as output:
+        for inter in inters:
+            coords = inter['geometry']['coordinates']
+            re_point = pyproj.transform(inproj, outproj, coords[0], coords[1])
+            point = Point(re_point)
+            output.write({'geometry': mapping(point),
+                          'properties': inter['properties']})
 
-# Read in reprojected intersection
-inters = [(shape(inter['geometry']), inter['properties'])
-          for inter in fiona.open(inters_shp_path)]
-print "read in {} intersection points".format(len(inters))       
+    # Read in boston segments + mass DOT join
+    roads_shp_path = os.path.join(RAW_FP, 'ma_cob_spatially_joined_streets.shp')
+    roads = [(shape(road['geometry']), road['properties'])
+             for road in fiona.open(roads_shp_path)]
+    print "read in {} road segments".format(len(roads))
 
-# Initial buffer = 20 meters
-int_buffers = get_intersection_buffers(inters, 20)
+    # Read in reprojected intersection
+    inters = [(shape(inter['geometry']), inter['properties'])
+              for inter in fiona.open(inters_shp_path)]
+    print "read in {} intersection points".format(len(inters))
 
-# Create index for quick lookup
-print "creating rindex"
-int_buffers_index = rtree.index.Index()
-for idx, intersection_buffer in enumerate(int_buffers):
-    int_buffers_index.insert(idx, intersection_buffer.bounds)
+    # Initial buffer = 20 meters
+    int_buffers = get_intersection_buffers(inters, 20)
 
-# Split intersection lines (within buffer) and non-intersection lines
-# (outside buffer)
-print "splitting intersection/non-intersection segments"
-inter_segments = {}
-inter_segments['lines'] = defaultdict(list)
-inter_segments['data'] = defaultdict(list)
+    # Create index for quick lookup
+    print "creating rindex"
+    int_buffers_index = rtree.index.Index()
+    for idx, intersection_buffer in enumerate(int_buffers):
+        int_buffers_index.insert(idx, intersection_buffer.bounds)
 
-non_int_lines = []
-for road in roads:
-    road_int_buffers = []
-    # For each intersection whose buffer intersects road
-    for idx in int_buffers_index.intersection(road[0].bounds):
-        int_buffer = int_buffers[idx]
-        if int_buffer.intersects(road[0]):
-            # Add intersecting road segment line
-            inter_segments['lines'][idx].append(
-                int_buffer.intersection(road[0]))
-            # Add intersecting road segment data
-            inter_segments['data'][idx].append(road[1])
-            road_int_buffers.append(int_buffer)
-    # If intersection buffers intersect roads
-    if len(road_int_buffers) > 0:
-        # Find part of road outside of the intersecting parts
-        diff = road[0].difference(unary_union(road_int_buffers))
-        if 'LineString' == diff.type:
-            non_int_lines.append((diff, road[1]))
-        elif 'MultiLineString' == diff.type:
-            non_int_lines.extend([(line, road[1]) for line in diff])
-    else:
-        non_int_lines.append(road)
+    # Split intersection lines (within buffer) and non-intersection lines
+    # (outside buffer)
+    print "splitting intersection/non-intersection segments"
+    inter_segments = {'lines': defaultdict(list), 'data': defaultdict(list)}
 
-# Planarize intersection segments
-union_inter = [({'id': idx}, unary_union(l))
-               for idx, l in inter_segments['lines'].items()]
-print "extracted {} intersection segments".format(len(union_inter))
+    non_int_lines = []
+    for road in roads:
+        road_int_buffers = []
+        # For each intersection whose buffer intersects road
+        for idx in int_buffers_index.intersection(road[0].bounds):
+            int_buffer = int_buffers[idx]
+            if int_buffer.intersects(road[0]):
+                # Add intersecting road segment line
+                inter_segments['lines'][idx].append(
+                    int_buffer.intersection(road[0]))
+                # Add intersecting road segment data
+                inter_segments['data'][idx].append(road[1])
+                road_int_buffers.append(int_buffer)
+        # If intersection buffers intersect roads
+        if len(road_int_buffers) > 0:
+            # Find part of road outside of the intersecting parts
+            diff = road[0].difference(unary_union(road_int_buffers))
+            if 'LineString' == diff.type:
+                non_int_lines.append((diff, road[1]))
+            elif 'MultiLineString' == diff.type:
+                non_int_lines.extend([(line, road[1]) for line in diff])
+        else:
+            non_int_lines.append(road)
 
-# Intersections shapefile
-inter_schema = {
-    'geometry': 'LineString',
-    'properties': {'id': 'int'},
-}
+    # Planarize intersection segments
+    union_inter = [({'id': idx}, unary_union(l))
+                   for idx, l in inter_segments['lines'].items()]
+    print "extracted {} intersection segments".format(len(union_inter))
 
-write_shp(inter_schema, MAP_FP + '/inters_segments.shp', union_inter, 1, 0)
+    # Intersections shapefile
+    inter_schema = {
+        'geometry': 'LineString',
+        'properties': {'id': 'int'},
+    }
 
-# Output inters_segments properties as json
-with open(DATA_FP + '/inters_data.json', 'w') as f:
-    json.dump(inter_segments['data'], f)
+    write_shp(inter_schema, os.path.join(INTERIM_FP, 'inters_segments.shp'), union_inter, 1, 0)
 
-# add non_inter id format = 00+i
-non_int_w_ids = []
-i = 0
-for l in non_int_lines:
-    prop = copy.deepcopy(l[1])
-    prop['id'] = '00' + str(i)
-    non_int_w_ids.append(tuple([l[0], prop]))
-    i += 1
-print "extracted {} non-intersection segments".format(len(non_int_w_ids))
+    # Output inters_segments properties as json
+    with open(os.path.join(INTERIM_FP, 'inters_data.json'), 'w') as f:
+        json.dump(inter_segments['data'], f)
 
-# Non-intersection shapefile
-road_properties = {k: 'str' for k, v in non_int_w_ids[0][1].items()}
-road_schema = {
-    'geometry': 'LineString',
-    'properties': road_properties
-}
+    # add non_inter id format = 00+i
+    non_int_w_ids = []
+    i = 0
+    for l in non_int_lines:
+        prop = copy.deepcopy(l[1])
+        prop['id'] = '00' + str(i)
+        non_int_w_ids.append(tuple([l[0], prop]))
+        i += 1
+    print "extracted {} non-intersection segments".format(len(non_int_w_ids))
 
-write_shp(road_schema, MAP_FP + '/non_inters_segments.shp', non_int_w_ids, 0, 1)
+    # Non-intersection shapefile
+    road_properties = {k: 'str' for k, v in non_int_w_ids[0][1].items()}
+    road_schema = {
+        'geometry': 'LineString',
+        'properties': road_properties
+    }
+
+    write_shp(road_schema, os.path.join(INTERIM_FP, 'non_inters_segments.shp'), non_int_w_ids, 0, 1)
+
+
+if __name__ == '__main__':
+    main()
