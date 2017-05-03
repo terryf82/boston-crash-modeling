@@ -76,7 +76,7 @@ def road_make(feats, inters_fp, non_inters_fp, agg='max'):
     aggregated = getattr(combined.groupby(combined.index), agg)
     combined = aggregated()
 
-    return(combined)
+    return combined
 
 
 def main():

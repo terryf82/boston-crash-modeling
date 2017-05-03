@@ -1,10 +1,15 @@
 ## TODO: maybe rewrite these with pandas built-in rolling calcs
 ## straight from BP's Jupyter notebook
+
+
 def format_crash_data(data, col, target):
-    """ formats crash data for train/test 
-    target: week to predict (make into binary target)
-        must be >4 months in
-    gets previous week count, previous month count, previous quarter count, avg per week
+    """ formats crash data for train/test gets previous week count, previous month count, previous quarter count, 
+    avg per week 
+
+    Args:
+        data: dataframe of crash data
+        col: column name / index for week column? 
+        target: week to predict (make into binary target) must be >4 months in
 
     """
     assert target > 16
