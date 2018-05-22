@@ -10,7 +10,7 @@
         "properties": {
             "id": {
                 "description": "Unique identifier of crash",
-                "type": "string"
+                "type": "number"
             },
             "dateOccurred": {
                 "description": "Date crash occurred, ISO8601 formatted",
