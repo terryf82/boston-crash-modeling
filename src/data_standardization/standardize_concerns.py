@@ -119,15 +119,19 @@ for csv_file in os.listdir(raw_path):
                 ("summary", key["issue_description"])
             ]))
 
-print "done, {} concerns loaded, validating against schema".format(len(concerns))
+if (len(concerns) > 0):
+    print "done, {} concerns loaded, validating against schema".format(len(concerns))
 
-schema_path = os.path.join(BASE_FP, "standards/concerns-schema.json")
-with open(schema_path) as concerns_schema:
-    validate(concerns, json.load(concerns_schema))
+    schema_path = os.path.join(BASE_FP, "standards/concerns-schema.json")
+    with open(schema_path) as concerns_schema:
+        validate(concerns, json.load(concerns_schema))
 
-concerns_output = os.path.join(args.folder, "standardized/concerns.json")
+    concerns_output = os.path.join(args.folder, "standardized/concerns.json")
 
-with open(concerns_output, "w") as f:
-    json.dump(concerns, f)
+    with open(concerns_output, "w") as f:
+        json.dump(concerns, f)
 
-print "output written to {}".format(concerns_output)
+    print "output written to {}".format(concerns_output)
+
+else:
+    print "no concerns files found"
