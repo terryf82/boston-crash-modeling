@@ -4,13 +4,14 @@ from shapely.geometry import Point
 import pyproj
 import csv
 import fiona
-import json
+import geojson
+
 
 TEST_FP = os.path.dirname(os.path.abspath(__file__))
 
 
-def test_read_shp():
-    res = util.read_shp(TEST_FP + '/data/processed/maps/inters.shp')
+def test_read_geojson():
+    res = util.read_geojson(TEST_FP + '/data/processed/maps/inters.geojson')
     assert len(res) == 6
     assert type(res[0][0]) == Point
 
@@ -66,28 +67,6 @@ def test_read_record():
     assert result == expected
 
 
-def test_csv_to_projected_records(tmpdir):
-    x = float(-71.07)
-    y = float(42.3)
-    print tmpdir
-    file = str(tmpdir) + '/test.csv'
-    with open(file, 'wb') as csvfile:
-        writer = csv.writer(csvfile, delimiter=',')
-        writer.writerow(['col1', 'col2', 'col3'])
-        writer.writerow(['test', x, y])
-    results = util.csv_to_projected_records(file,
-                                            'col2', 'col3')
-    expected_props = {
-        'col1': 'test',
-        'col2': '-71.07',
-        'col3': '42.3'
-    }
-    expected_point = Point(float(-7911476.210677952), float(5206024.46129235))
-
-    assert results[0]['point'] == expected_point
-    assert results[0]['properties'] == expected_props
-
-
 def find_nearest():
     # todo
     pass
@@ -95,10 +74,6 @@ def find_nearest():
 
 def test_read_segments():
     # todo
-    pass
-
-
-def test_write_points():
     pass
 
 
@@ -113,7 +88,7 @@ def test_reproject_records():
 
 
 def test_group_json_by_location(tmpdir):
-    tmppath = tmpdir.strpath
+
     test_json = [{
         'near_id': '001',
         'key1': 'value1',
@@ -127,22 +102,18 @@ def test_group_json_by_location(tmpdir):
         'key2': 'abc',
     }]
 
-    filename = tmppath + '/crash_joined.json'
-    with open(filename, 'w') as f:
-        json.dump(test_json, f)
-
-    result = util.group_json_by_location(filename)
+    result = util.group_json_by_location(test_json)
     assert result == ([
-        {'near_id': '001', u'key1': 'value1', 'key2': 'value2'},
+        {'near_id': '001', 'key1': 'value1', 'key2': 'value2'},
         {'near_id': '2', 'key1': 'test'},
         {'near_id': '001', 'key1': 'testtest', 'key2': 'abc'}
     ], {
         '001': {'count': 2}, '2': {'count': 1}
     })
 
-    result = util.group_json_by_location(filename, otherfields=['key1'])
+    result = util.group_json_by_location(test_json, otherfields=['key1'])
     assert result == ([
-        {'near_id': '001', u'key1': 'value1', 'key2': 'value2'},
+        {'near_id': '001', 'key1': 'value1', 'key2': 'value2'},
         {'near_id': '2', 'key1': 'test'},
         {'near_id': '001', 'key1': 'testtest', 'key2': 'abc'}
     ], {
@@ -159,3 +130,77 @@ def test_make_schema():
         'Point', test_schema)
     assert result_schema == {'geometry': 'Point', 'properties':
                              {'X': 'str', 'NAME': 'str'}}
+
+def test_prepare_geojson():
+    records = [{
+        'geometry': {
+            "coordinates": [
+                [
+                    [-7914260.749231104, 5206877.878672692],
+                    [-7914262.982810471, 5206897.741836411]
+                ],
+                [
+                    [-7914262.982810471, 5206897.741836411],
+                    [-7914247.3920878805, 5206885.229947844]
+                ],
+                [
+                    [-7914267.358916062, 5206917.238736267],
+                    [-7914266.99031214, 5206914.148600942],
+                    [-7914262.982810471, 5206897.741836411]
+                ]
+            ],
+            "type": "MultiLineString"
+        },
+        'properties': {'id': 2}
+    }]
+    results = util.prepare_geojson(records)
+
+    assert results == {
+        "features": [{
+            "geometry": {
+                "coordinates": [
+                    [
+                        [-71.09501393541515, 42.30567003680977],
+                        [-71.095034, 42.30580199999999]
+                    ],
+                    [
+                        [-71.095034, 42.30580199999999],
+                        [-71.09489394615605, 42.30571887587566]
+                    ],
+                    [
+                        [-71.09507331122536, 42.30593152960553],
+                        [-71.09507, 42.30591099999999],
+                        [-71.095034, 42.30580199999999]
+                    ]
+                ],
+                "type": "MultiLineString"
+            },
+            "id": 2,
+            "properties": {"id": 2},
+            "type": "Feature"
+        }],
+        "type": "FeatureCollection"
+    }
+
+
+def test_get_center_point():
+    assert util.get_center_point(
+        geojson.Feature(
+            geometry=geojson.LineString([[1, 0], [3, 0]]))) == (2.0, 0.0)
+
+    assert util.get_center_point(geojson.Feature(
+        geometry=geojson.MultiLineString(
+            [[[2, 0], [2, 4]], [[0, 2], [4, 2]]]))) == (2.0, 2.0)
+    assert util.get_center_point(
+        geojson.Feature(geometry=geojson.Point([0, 0]))) == (None, None)
+
+
+def test_get_roads_and_inters():
+
+    path = os.path.join(
+        TEST_FP, 'data',
+        'test_get_roads_and_inters.geojson')
+    print(path)
+    roads, inters = util.get_roads_and_inters(path)
+    assert len(roads) == 4
+    assert len(inters) == 1

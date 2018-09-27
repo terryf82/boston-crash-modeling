@@ -7,9 +7,8 @@ import xgboost as xgb
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn import metrics
-from sklearn.model_selection import RandomizedSearchCV, KFold, StratifiedKFold, GroupKFold, GroupShuffleSplit
+from sklearn.model_selection import RandomizedSearchCV, KFold, GroupShuffleSplit
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.preprocessing import StandardScaler
 
 class Indata():
     scoring = None
@@ -26,6 +25,8 @@ class Indata():
         else:
             self.data = data
         self.target = target
+        # check to see that target has more than one value
+        assert self.data[self.target].nunique()>1
     
     # Split into train/test
     # pct : percent training observations
@@ -56,10 +57,10 @@ class Indata():
         else:
             inds = np.random.rand(len(self.data)) < pct
         self.train_x = self.data[inds]
-        print 'Train obs:', len(self.train_x)
+        print('Train obs:', len(self.train_x))
         self.train_y = self.data[self.target][inds]
         self.test_x = self.data[~inds]
-        print 'Test obs:', len(self.test_x)
+        print('Test obs:', len(self.test_x))
         self.test_y = self.data[self.target][~inds]
         self.is_split = 1
         
@@ -174,9 +175,9 @@ class Tester():
         """ gets predictions and runs metrics """
         preds, probs = self.predsprobs(model, test_x)
         f1_s, roc, brier = self.get_metrics(preds, probs, test_y)
-        print "f1_score: ", f1_s
-        print "roc auc: ", roc
-        print "brier_score: ", brier
+        print("f1_score: ", f1_s)
+        print("roc auc: ", roc)
+        print("brier_score: ", brier)
         result = {}
         result['f1_s'] = f1_s
         result['roc'] = roc
@@ -194,7 +195,7 @@ class Tester():
         results = {}
         results['features'] = list(features)
         results['model'] = model
-        print "Fitting {} model with {} features".format(name, len(features))
+        print("Fitting {} model with {} features".format(name, len(features)))
         if cal:
             # Need disjoint calibration/training datasets
             # Split 50/50
@@ -216,12 +217,12 @@ class Tester():
         results['raw'] = result
         results['m_fit'] = m_fit
         if cal:
-            print "calibrated:"
+            print("calibrated:")
             m_c = CalibratedClassifierCV(model, method = cal_m)
             m_fit_c = m_c.fit(cal_x, cal_y)
             result_c = self.make_result(m_fit_c, self.data.test_x[features], self.data.test_y)
             results['calibrated'] = result_c              
-            print "\n"
+            print("\n")
         if name in self.rundict:
             self.rundict[name].update(results)
         else:
@@ -273,19 +274,19 @@ class Tester():
         if model_params:
             pass
         elif model not in self.rundict:
-            preds, probs = self.predsprobs(model, self.data.test_x[features])
+            _, probs = self.predsprobs(model, self.data.test_x[features])
         else:
             model_params = self.rundict[model]
-            preds, probs = self.predsprobs(model_params['m_fit'],
+            _, probs = self.predsprobs(model_params['m_fit'],
                 self.data.test_x[model_params['features']])
         risk_df = pd.DataFrame(
             {'probs':probs, 'target':self.data.test_y})
         risk_df['categories'] = pd.qcut(risk_df['probs'], qcut)
         risk_mean = risk_df.groupby('categories')['target'].mean().reset_index()
         if verbose:
-            print risk_df.probs.describe()
-            print risk_mean
-        fig, axes = plt.subplots(1, 2)
+            print(risk_df.probs.describe())
+            print(risk_mean)
+        _, axes = plt.subplots(1, 2)
         self.lift_chart('categories', 'target', risk_df, 
                    ax=axes[1])
         self.density(risk_df, 'probs', ax=axes[0])

@@ -1,4 +1,6 @@
-FROM continuumio/anaconda
+FROM continuumio/miniconda3
+# update
+RUN conda update -n base conda
 
 # Set package installer as non-interactive
 ENV DEBIAN_FRONTEND noninteractive
@@ -6,21 +8,17 @@ ENV DEBIAN_FRONTEND noninteractive
 # Set a terminal type
 ENV TERM xterm-256color
 
-# Use bash for the entrypoint rather than sh, for 'conda activate' compatibility
-ENTRYPOINT ["/bin/bash", "-c"]
-
 WORKDIR /app
 
 # Install packges
-# (gcc) installed to enable conda to create virtual environments
-RUN apt-get update -qq && apt-get install -y \
-	gcc \
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 	# apache for serving the visualisation
 	apache2 \
 	# easier management of services via supervisor
 	supervisor \
 	# base anaconda image seems to lack libgl support required for our virtual environment
 	libgl1-mesa-glx \
+	# handy text editor
 	vim
 
 # Setup apache & supervisor
@@ -37,20 +35,17 @@ RUN service apache2 stop && service supervisor stop
 ADD conf/start.sh /start.sh
 RUN chmod +x /start.sh
 
-# Setup the app's virtual environment
-COPY environment_docker.yml /app/environment_docker.yml
-RUN ["conda", "env", "create", "--file", "environment_docker.yml"]
+# Setup the project's virtual environment
+COPY environment.yml /app/environment.yml
+RUN ["conda", "env", "create", "--file", "environment.yml"]
 
-# Copy over the app
-COPY . /app
+# Use bash for the entrypoint rather than sh, for 'conda activate' compatibility
+ENTRYPOINT ["/bin/bash", "-c"]
 
-# Activate the virtual environment (fulfils the work of 'source activate boston-crash-model' without the overhead)
-ENV PATH /opt/conda/envs/boston-crash-model/bin:$PATH
+# Activate the project's virtual environment
+RUN echo "conda activate crash-model" >> ~/.bashrc
 
-# On startup:
-# call the script to generate historical crash map
-# hand off to entrypoint script
-# CMD ["python historical_crash_map.py && /start.sh"]
+# this startup script runs supervisor in foreground (which in turn starts apache) to keep container running
 CMD ["/start.sh"]
 
 # Make the apache port available

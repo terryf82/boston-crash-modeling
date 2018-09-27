@@ -19,8 +19,9 @@ BASE_DIR = os.path.dirname(
 
 RAW_DATA_FP = os.path.join(BASE_DIR, 'data/raw')
 PROCESSED_DATA_FP = os.path.join(BASE_DIR, 'data/processed')
-ATR_FP = os.path.join(RAW_DATA_FP, 'AUTOMATED TRAFFICE RECORDING')
-TMC_FP = os.path.join(RAW_DATA_FP, 'TURNING MOVEMENT COUNT')
+ATR_FP = os.path.join(RAW_DATA_FP, 'volume', 'ATRs')
+TMC_FP = os.path.join(RAW_DATA_FP, 'volume', 'TMCs')
+STANDARDIZED_DATA_FP = os.path.join(BASE_DIR, 'data', 'standardized')
 
 
 def num_hours(filename):
@@ -60,11 +61,11 @@ def lookup_address(intersection, cached):
     Returns:
         tuple of original address, geocoded address, latitude, longitude
     """
-    if intersection in cached.keys():
-        print intersection + ' is cached'
+    if intersection in list(cached.keys()):
+        print(intersection + ' is cached')
         return cached[intersection]
     else:
-        print 'geocoding ' + intersection
+        print('geocoding ' + intersection)
         return list(util.geocode_address(intersection))
 
 
@@ -76,6 +77,7 @@ def find_address_from_filename(filename, cached):
     Returns:
         tuple of original address, geocoded address, latitude, longitude
     """
+
     intersection = filename.split('_')[2]
     streets = intersection.split(',')
     streets = [re.sub('-', ' ', s) for s in streets]
@@ -92,22 +94,24 @@ def find_address_from_filename(filename, cached):
         if (result is None
                 or 'Boston' not in str(result[0])) and len(streets) > 2:
             intersection = streets[0] + ' and ' + streets[2] + ' Boston, MA'
-            print 'trying again, this time geocoding ' + intersection
+            print('trying again, this time geocoding ' + intersection)
             result = list(util.geocode_address(intersection))
         result.insert(0, intersection)
+
         return result
-    return None, None, None, None
+    
+    return None, None, None, None, 'F'
 
 
 def snap_inter_and_non_inter(summary):
-    inter = util.read_shp(
-        os.path.join(PROCESSED_DATA_FP, 'maps/inters_segments.shp'))
+    inter = util.read_geojson(
+        os.path.join(PROCESSED_DATA_FP, 'maps/inters_segments.geojson'))
 
     # Create spatial index for quick lookup
     segments_index = rtree.index.Index()
     for idx, element in enumerate(inter):
         segments_index.insert(idx, element[0].bounds)
-    print "Snapping tmcs to intersections"
+    print("Snapping tmcs to intersections")
 
     address_records = util.raw_to_record_list(
         summary, pyproj.Proj(init='epsg:4326'), x='Longitude', y='Latitude')
@@ -136,14 +140,8 @@ def get_normalization_factor():
     Returns:
         Tuple of 11 hour normalization, 12 hour normalization
     """
-    # Read in atr lats
-    atrs = util.csv_to_projected_records(
-        os.path.join(PROCESSED_DATA_FP, 'geocoded_atrs.csv'), x='lng', y='lat')
-
-    files = [os.path.join(ATR_FP,
-             atr['properties']['filename']) for atr in atrs]
-    all_counts = util.get_hourly_rates(files)
-    counts = [sum(i)/len(all_counts) for i in zip(*all_counts)]
+    counts = util.get_hourly_rates(os.path.join(
+        STANDARDIZED_DATA_FP, 'volume.json'))
 
     return sum(counts[7:18]), sum(counts[7:19])
 
@@ -211,12 +209,12 @@ def get_conflict_count(dir_locations, sheet, row, sheet2):
     }]
 
     for conflict in conflict_sets:
-        if conflict['from1'] in dir_locations.keys() \
-           and conflict['to1'] in dir_locations[
-               conflict['from1']]['to'].keys() \
-           and conflict['from2'] in dir_locations.keys() \
-           and conflict['to2'] in dir_locations[
-               conflict['from2']]['to'].keys():
+        if conflict['from1'] in list(dir_locations.keys()) \
+           and conflict['to1'] in list(dir_locations[
+               conflict['from1']]['to'].keys()) \
+           and conflict['from2'] in list(dir_locations.keys()) \
+           and conflict['to2'] in list(dir_locations[
+               conflict['from2']]['to'].keys()):
             for index in range(row+1, sheet.nrows):
                 conflict_count1 = sheet.cell_value(
                     index,
@@ -283,7 +281,7 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
         return
     while col < sheet.ncols:
         if north in sheet.cell_value(row, col).lower():
-            if 'north' in dir_locations.keys():
+            if 'north' in list(dir_locations.keys()):
                 return
             dir_locations = add_direction(
                 dir_locations,
@@ -295,7 +293,7 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
             current = 'north'
             curr_count = 0
         elif south in sheet.cell_value(row, col).lower():
-            if 'south' in dir_locations.keys():
+            if 'south' in list(dir_locations.keys()):
                 return
             dir_locations = add_direction(
                 dir_locations,
@@ -307,7 +305,7 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
             current = 'south'
             curr_count = 0
         elif east in sheet.cell_value(row, col).lower():
-            if 'east' in dir_locations.keys():
+            if 'east' in list(dir_locations.keys()):
                 return
             dir_locations = add_direction(
                 dir_locations,
@@ -319,7 +317,7 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
             current = 'east'
             curr_count = 0
         elif west in sheet.cell_value(row, col).lower():
-            if 'west' in dir_locations.keys():
+            if 'west' in list(dir_locations.keys()):
                 return
             dir_locations = add_direction(
                 dir_locations,
@@ -347,7 +345,7 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
     total_count = 0
     left_count = 0
     right_count = 0
-    for direction in dir_locations.keys():
+    for direction in list(dir_locations.keys()):
         indices = dir_locations[direction]['indices']
         dir_locations[direction]['to'] = {}
 
@@ -367,7 +365,7 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
             elif 'u-tr' in sheet.cell_value(row, col).lower():
                 dir_locations[direction]['to']['u-tr'] = col
 
-        for dir, col_index in dir_locations[direction]['to'].iteritems():
+        for dir, col_index in dir_locations[direction]['to'].items():
             col_sum = 0
             row_start = row + 1
 
@@ -401,14 +399,14 @@ def parse_15_min_format(workbook, sheet_name, format, sheet_name2=None):
 def parse_conflicts():
     count = 0
 
-    print 'getting normalization factors'
+    print('getting normalization factors')
     n_11, n_12 = get_normalization_factor()
 
     # Read geocoded cache
     geocoded_file = os.path.join(PROCESSED_DATA_FP, 'geocoded_addresses.csv')
     cached = {}
     if path_exists(geocoded_file):
-        print 'reading geocoded cache file'
+        print('reading geocoded cache file')
         cached = util.read_geocode_cache(filename=geocoded_file)
 
     summary = []
@@ -416,14 +414,15 @@ def parse_conflicts():
         if filename.endswith('.XLS'):
 
             # Pull out what we can from the filename itself
-            orig_address, address, latitude, longitude = \
+            orig_address, address, latitude, longitude, status = \
                 find_address_from_filename(filename, cached)
             # If you can't geocode the address then there's not much point
             # in parsing it because you won't be able to snap it to a segment
             if latitude:
 
                 if orig_address:
-                    cached[orig_address] = [address, latitude, longitude]
+                    cached[orig_address] = [
+                        address, latitude, longitude, status]
                 date = str(find_date(filename))
                 hours = num_hours(filename)
                 file_path = path.join(TMC_FP, filename)
@@ -468,9 +467,9 @@ def parse_conflicts():
                 if result:
                     count += 1
                     counts = result
-                    print filename
-                    print hours
-                    print counts
+                    print(filename)
+                    print(hours)
+                    print(counts)
 
                     normalized = ''
                     total = result[0]
@@ -496,7 +495,7 @@ def parse_conflicts():
     # Write out the cached file
     util.write_geocode_cache(cached, filename=geocoded_file)
 
-    print "parsed " + str(count) + " TMC files"
+    print("parsed " + str(count) + " TMC files")
     return summary
 
 if __name__ == '__main__':
@@ -514,35 +513,38 @@ if __name__ == '__main__':
     if args.datadir:
         RAW_DATA_FP = os.path.join(args.datadir, 'raw')
         PROCESSED_DATA_FP = os.path.join(args.datadir, 'processed')
-        ATR_FP = os.path.join(RAW_DATA_FP, 'AUTOMATED TRAFFICE RECORDING')
-        TMC_FP = os.path.join(RAW_DATA_FP, 'TURNING MOVEMENT COUNT')
+        STANDARDIZED_DATA_FP = os.path.join(args.datadir, 'standardized')
+        ATR_FP = os.path.join(RAW_DATA_FP, 'volume', 'ATRs')
+        TMC_FP = os.path.join(RAW_DATA_FP, 'volume', 'TMCs')
 
     if not os.path.exists(TMC_FP):
-        print "No TMC directory, skipping..."
+        print("No TMC directory, skipping...")
         sys.exit()
-    if not os.path.exists(ATR_FP):
+    if not os.path.exists(os.path.join(STANDARDIZED_DATA_FP, 'volume.json')):
         # At the moment this is true, but it probably can be skipped if
         # not available
-        print "TMC parsing needs ATRs for normalization, skipping..."
+        print("TMC parsing needs volume data for normalization, skipping...")
         sys.exit
 
     address_records = []
 
-    print 'Parsing turning movement counts...'
+    print('Parsing turning movement counts...')
     summary_file = os.path.join(PROCESSED_DATA_FP, 'tmc_summary.json')
     if not path_exists(summary_file) or args.forceupdate:
-        print 'Parsing tmc files...'
+        print('Parsing tmc files...')
 
         summary = parse_conflicts()
         address_records = snap_inter_and_non_inter(summary)
 
-        all_crashes, crashes_by_location = util.group_json_by_location(
-            os.path.join(PROCESSED_DATA_FP, 'crash_joined.json'))
+        items = json.load(
+            open(os.path.join(PROCESSED_DATA_FP, 'crash_joined.json')))
+
+        all_crashes, crashes_by_location = util.group_json_by_location(items)
 
         for record in address_records:
             if record['properties']['near_id'] \
                and str(record['properties']['near_id']) \
-               in crashes_by_location.keys():
+               in list(crashes_by_location.keys()):
                 record['properties']['crash_count'] = crashes_by_location[
                     str(record['properties']['near_id'])]['count']
 
@@ -551,7 +553,7 @@ if __name__ == '__main__':
             json.dump(address_records, f)
     else:
         address_records = json.load(open(summary_file))
-        print "Read in " + str(len(address_records)) + " records"
+        print("Read in " + str(len(address_records)) + " records")
 
 
 
